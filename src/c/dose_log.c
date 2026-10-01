@@ -1,4 +1,5 @@
 #include "dose_log.h"
+#include "med_list.h"
 
 // Persist key 19: ring-buffer dose log
 // Layout: { uint8_t count; uint8_t head; DoseLogEntry entries[32]; }
@@ -26,6 +27,15 @@ void dose_log_init(void) {
     }
 }
 
+static uint16_t med_signature(uint8_t med_index) {
+    MedEntry *med = med_list_get(med_index);
+    if (!med) return 0;
+    uint16_t hash = 21661;
+    for (const char *p = med->name; *p; p++) hash = (hash ^ (uint8_t)*p) * 167;
+    for (const char *p = med->taker; *p; p++) hash = (hash ^ (uint8_t)*p) * 167;
+    return hash;
+}
+
 void dose_log_deinit(void) {
     persist_write_data(PERSIST_KEY_DOSE_LOG, &s_store, sizeof(DoseLogStore));
 }
@@ -35,13 +45,22 @@ void dose_log_record(uint8_t med_index, DoseAction action, uint32_t ts) {
         .ts        = ts,
         .med_index = med_index,
         .action    = action,
-        ._pad      = 0,
+        .med_sig   = med_signature(med_index),
     };
     s_store.head = (s_store.head + 1) % DOSE_LOG_MAX;
     if (s_store.count < DOSE_LOG_MAX) s_store.count++;
 
     // Flush immediately so nothing is lost on crash
     persist_write_data(PERSIST_KEY_DOSE_LOG, &s_store, sizeof(DoseLogStore));
+}
+
+bool dose_log_was_taken(uint8_t med_index, uint32_t ts) {
+    for (uint8_t i = 0; i < s_store.count; i++) {
+        DoseLogEntry entry = dose_log_get(i);
+        if (entry.med_index == med_index && entry.med_sig == med_signature(med_index) &&
+            entry.ts == ts && entry.action == DOSE_TAKEN) return true;
+    }
+    return false;
 }
 
 uint8_t dose_log_count(void) {

@@ -3,7 +3,7 @@
   "shortName": "PebbleMeds",
   "longName": "Pebble Meds",
   "companyName": "Britt Piehler",
-  "versionLabel": "1.0.4",
+  "versionLabel": "1.0.6",
   "sdkVersion": "3",
   "targetPlatforms": ["aplite", "basalt", "chalk", "diorite", "emery", "flint", "gabbro"],
   "watchapp": {
@@ -31,5 +31,5 @@
       { "type": "bitmap", "name": "IMAGE_ICON_SKIP",   "file": "images/icon_skip.png"   }
     ]
   },
-  "capabilities": ["configurable", "timeline_enabled"]
+  "capabilities": ["configurable", "timeline_enabled", "health"]
 }

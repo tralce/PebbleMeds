@@ -511,6 +511,10 @@
       <span class="slider"></span>
     </label>
   </div>
+  <div class="row">
+    <div><div class="label">Quiet while sleeping</div><div class="hint">Show alerts without vibration or backlight when Pebble Health detects sleep</div></div>
+    <label class="toggle-wrap"><input type="checkbox" id="quiet-sleep"><span class="slider"></span></label>
+  </div>
 </section>
 
 <!-- Medications -->
@@ -527,6 +531,14 @@
 <!-- Save bar -->
 <div class="save-bar">
   <button class="btn-save" onclick="saveConfig()">Save &amp; Close</button>
+</div>
+<div class="modal-overlay" id="delete-overlay">
+  <div class="modal" style="padding:20px;max-width:340px;">
+    <h3 id="delete-title">Remove medication?</h3>
+    <p>Save &amp; Close to remove it from the watch and Timeline.</p>
+    <button class="btn-cancel" onclick="closeDelete()">Cancel</button>
+    <button class="btn-save-med" id="delete-confirm">Remove</button>
+  </div>
 </div>
 
 <!-- Add/Edit Modal -->
@@ -574,7 +586,14 @@
             <input type="radio" name="schedule-type" id="sched-weekly" value="weekly" onchange="onScheduleTypeChange()">
             <span>📅 Weekly</span>
           </label>
+          <label><input type="radio" name="schedule-type" id="sched-calendar" value="calendar" onchange="onScheduleTypeChange()"><span>📆 Every N days</span></label>
         </div>
+      </div>
+
+      <div id="panel-calendar" class="field" style="display:none;">
+        <label>Start date</label><input type="date" id="f-calendar-date">
+        <label>Time</label><input type="time" id="f-calendar-time" value="08:00">
+        <label>Repeat every</label><input type="number" id="f-calendar-days" min="1" max="365" value="2"> days
       </div>
 
       <!-- Fixed Times Panel -->
@@ -622,6 +641,12 @@
         <div class="field-hint" style="background:rgba(255,170,0,0.08);border:1px solid #ffaa0033;border-radius:6px;padding:8px 10px;margin-top:8px;">
           ⚡ Weekly scheduling requires <strong>watch app v1.0.4+</strong>. On older versions, doses will fire daily at the set time.
         </div>
+      </div>
+
+      <!-- Inventory -->
+      <div class="field">
+        <label>Doses remaining (optional)</label><input type="number" id="f-inventory" min="0" max="32767" placeholder="Not tracked">
+        <label>Low supply at or below</label><input type="number" id="f-low-threshold" min="0" max="32767" value="5">
       </div>
 
       <!-- Vibration -->
@@ -746,6 +771,7 @@ document.addEventListener("DOMContentLoaded", function () {
         if (cfg.settings.privacyMode !== undefined) {
           document.getElementById("privacy-mode").checked = cfg.settings.privacyMode;
         }
+        document.getElementById("quiet-sleep").checked = !!cfg.settings.quietDuringSleep;
         if (cfg.settings.knownTakers && cfg.settings.knownTakers.length) {
           knownTakers = cfg.settings.knownTakers;
         }
@@ -897,8 +923,13 @@ function buildMedItem(med, index) {
       if (med.weekMask & (1 << i)) dayNames.push(label);
     });
     subParts.push(dayNames.join(", "));
+  } else if (med.scheduleType === "calendar") {
+    subParts.push("Every " + med.intervalDays + " days from " + med.startDate);
   } else {
     subParts.push("Every " + med.intervalHours + "h");
+  }
+  if (med.inventory !== undefined && med.inventory !== null && med.inventory >= 0) {
+    subParts.push(med.inventory + " left" + (med.inventory <= (med.lowThreshold || 0) ? " · Low supply" : ""));
   }
   sub.textContent = subParts.join(" · ");
 
@@ -930,10 +961,15 @@ function buildMedItem(med, index) {
 }
 
 function deleteMed(index) {
-  if (!confirm("Remove " + meds[index].name + "?")) return;
-  meds.splice(index, 1);
-  renderMedList();
+  document.getElementById("delete-title").textContent = "Remove " + meds[index].name + "?";
+  document.getElementById("delete-confirm").onclick = function () {
+    meds.splice(index, 1);
+    closeDelete();
+    renderMedList();
+  };
+  document.getElementById("delete-overlay").classList.add("open");
 }
+function closeDelete() { document.getElementById("delete-overlay").classList.remove("open"); }
 
 // ---------------------------------------------------------------------------
 // Taker dropdown helpers
@@ -1003,16 +1039,29 @@ function openModal(index) {
     document.querySelector('input[name="pill-color"]').checked = true;
     setTimes([{ h: 8, m: 0 }]);
     document.getElementById("f-vibe").value = "short";
+    document.getElementById("f-inventory").value = "";
+    document.getElementById("f-low-threshold").value = "5";
+    var today = new Date();
+    document.getElementById("f-calendar-date").value = today.getFullYear() + "-" + pad(today.getMonth() + 1) + "-" + pad(today.getDate());
+    document.getElementById("f-calendar-time").value = "08:00";
+    document.getElementById("f-calendar-days").value = "2";
   } else {
     var med = meds[index];
     populateTakerSelect(med.taker);
     document.getElementById("f-name").value = med.name;
     document.getElementById("f-dose").value = med.dose || "";
+    document.getElementById("f-inventory").value = med.inventory >= 0 ? med.inventory : "";
+    document.getElementById("f-low-threshold").value = med.lowThreshold == null ? 5 : med.lowThreshold;
 
     if (med.scheduleType === "interval") {
       document.getElementById("sched-interval").checked = true;
       setIntervalHours(med.intervalHours);
       document.getElementById("f-start-time").value = pad(med.startHour) + ":" + pad(med.startMinute);
+    } else if (med.scheduleType === "calendar") {
+      document.getElementById("sched-calendar").checked = true;
+      document.getElementById("f-calendar-date").value = med.startDate;
+      document.getElementById("f-calendar-time").value = pad(med.startHour) + ":" + pad(med.startMinute);
+      document.getElementById("f-calendar-days").value = med.intervalDays;
     } else if (med.scheduleType === "weekly") {
       document.getElementById("sched-weekly").checked = true;
       setWeekMask(med.weekMask || 0);
@@ -1056,9 +1105,11 @@ document.getElementById("modal-overlay").addEventListener("click", function (e) 
 function onScheduleTypeChange() {
   var isFixed  = document.getElementById("sched-fixed").checked;
   var isWeekly = document.getElementById("sched-weekly").checked;
+  var isCalendar = document.getElementById("sched-calendar").checked;
   document.getElementById("panel-fixed").style.display    = isFixed ? "block" : "none";
-  document.getElementById("panel-interval").style.display = (!isFixed && !isWeekly) ? "block" : "none";
+  document.getElementById("panel-interval").style.display = (!isFixed && !isWeekly && !isCalendar) ? "block" : "none";
   document.getElementById("panel-weekly").style.display   = isWeekly ? "block" : "none";
+  document.getElementById("panel-calendar").style.display = isCalendar ? "block" : "none";
 }
 
 function onIntervalPresetChange() {
@@ -1173,6 +1224,11 @@ function saveMed() {
   var vibe = document.getElementById("f-vibe").value;
   var med = { taker: taker, name: name, dose: dose, shape: shape, color: color,
               vibePattern: vibe === "short" ? undefined : vibe };
+  var inventory = document.getElementById("f-inventory").value;
+  var threshold = document.getElementById("f-low-threshold").value;
+  if (inventory !== "" && (!/^\d+$/.test(inventory) || Number(inventory) > 32767)) { alert("Enter a valid dose count."); return; }
+  if (!/^\d+$/.test(threshold) || Number(threshold) > 32767) { alert("Enter a valid low-supply threshold."); return; }
+  if (inventory !== "") { med.inventory = Number(inventory); med.lowThreshold = Number(threshold); }
 
   if (editingIndex >= 0 && meds[editingIndex].medId) {
     med.medId = meds[editingIndex].medId;
@@ -1198,6 +1254,19 @@ function saveMed() {
     med.lastTakenTs   = (editingIndex >= 0 && meds[editingIndex].lastTakenTs)
                           ? meds[editingIndex].lastTakenTs
                           : 0;
+  } else if (document.getElementById("sched-calendar").checked) {
+    var date = document.getElementById("f-calendar-date").value;
+    var time = document.getElementById("f-calendar-time").value;
+    var days = Number(document.getElementById("f-calendar-days").value);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number(date.slice(0, 4)) < 1970 || Number(date.slice(0, 4)) > 2099 ||
+        !/^\d{2}:\d{2}$/.test(time) || !Number.isInteger(days) || days < 1 || days > 365) {
+      alert("Enter a start date, time, and interval from 1 to 365 days."); return;
+    }
+    med.scheduleType = "calendar";
+    med.startDate = date;
+    med.startHour = Number(time.slice(0, 2));
+    med.startMinute = Number(time.slice(3, 5));
+    med.intervalDays = days;
   } else {
     if (!weekMaskState) { alert("Please select at least one day of the week."); return; }
     var timeParts = document.getElementById("f-weekly-time").value.split(":");
@@ -1225,6 +1294,7 @@ function saveConfig() {
     settings: {
       snoozeMins:   parseInt(document.getElementById("snooze-mins").value, 10) || 15,
       privacyMode:  document.getElementById("privacy-mode").checked,
+      quietDuringSleep: document.getElementById("quiet-sleep").checked,
       knownTakers:  knownTakers
     }
   };

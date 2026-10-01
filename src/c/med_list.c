@@ -1,6 +1,7 @@
 #include "med_list.h"
 #include <pebble.h>
 #include <string.h>
+#include <stddef.h>
 
 #define TEST_MODE 0
 
@@ -14,7 +15,7 @@
 
 static MedEntry  s_meds[MED_MAX];
 static uint8_t   s_count = 0;
-static AppSettings s_settings = { .snoozeMins = 15, .privacyMode = false };
+static AppSettings s_settings = { .snoozeMins = 15 };
 
 // ---------------------------------------------------------------------------
 // Test Data
@@ -68,7 +69,13 @@ void med_list_init(void) {
         s_count = (uint8_t)persist_read_int(PERSIST_KEY_MED_COUNT);
         if (s_count > MED_MAX) s_count = MED_MAX;
         for (uint8_t i = 0; i < s_count; i++) {
-            persist_read_data(PERSIST_KEY_MED_BASE + i, &s_meds[i], sizeof(MedEntry));
+            s_meds[i].inventory = -1;
+            int size = persist_get_size(PERSIST_KEY_MED_BASE + i);
+            if (size > 0) {
+                if (size > (int)sizeof(MedEntry)) size = sizeof(MedEntry);
+                persist_read_data(PERSIST_KEY_MED_BASE + i, &s_meds[i], size);
+                if (size <= (int)offsetof(MedEntry, inventory)) s_meds[i].inventory = -1;
+            }
         }
     } 
 #if TEST_MODE
@@ -78,7 +85,9 @@ void med_list_init(void) {
 #endif
 
     if (persist_exists(PERSIST_KEY_SETTINGS)) {
-        persist_read_data(PERSIST_KEY_SETTINGS, &s_settings, sizeof(AppSettings));
+        int size = persist_get_size(PERSIST_KEY_SETTINGS);
+        if (size > (int)sizeof(AppSettings)) size = sizeof(AppSettings);
+        if (size > 0) persist_read_data(PERSIST_KEY_SETTINGS, &s_settings, size);
     }
 }
 
@@ -117,6 +126,10 @@ void med_list_save_settings(void) {
     persist_write_data(PERSIST_KEY_SETTINGS, &s_settings, sizeof(AppSettings));
 }
 
+void med_list_save(uint8_t index) {
+    if (index < s_count) persist_write_data(PERSIST_KEY_MED_BASE + index, &s_meds[index], sizeof(MedEntry));
+}
+
 // NOTE: This function has a pure-JS counterpart in src/pkjs/schedule.js
 // (getNextDoseTimes / getFixedTimes / getIntervalTimes).  Keep the two in
 // sync — any change to scheduling logic here must be reflected there, and
@@ -132,8 +145,9 @@ time_t med_list_next_dose_time(const MedEntry *med, time_t after) {
             t.tm_hour = med->times[i].h;
             t.tm_min  = med->times[i].m;
             t.tm_sec  = 0;
+            t.tm_isdst = -1;
             time_t occ = mktime(&t);
-            if (occ <= after) occ += 24 * 3600; // Tomorrow
+            if (occ <= after) { t.tm_mday++; t.tm_isdst = -1; occ = mktime(&t); }
             if (best == 0 || occ < best) best = occ;
         }
         return best;
@@ -166,6 +180,24 @@ time_t med_list_next_dose_time(const MedEntry *med, time_t after) {
             }
             return next;
         }
+    } else if (med->scheduleType == SCHEDULE_CALENDAR) {
+        if (!med->intervalDays || !med->startYear || !med->startMonth || !med->startDay) return 0;
+        struct tm start = { .tm_year = med->startYear - 1900,
+                            .tm_mon = med->startMonth - 1, .tm_mday = med->startDay,
+                            .tm_hour = med->startHour, .tm_min = med->startMinute,
+                            .tm_isdst = -1 };
+        time_t first = mktime(&start);
+        if (first > after) return first;
+        struct tm today = *localtime(&after);
+        int days = today.tm_yday - start.tm_yday;
+        for (int year = start.tm_year + 1900; year < today.tm_year + 1900; year++)
+            days += 365 + (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
+        if (days < 0) days = 0;
+        start.tm_mday += (days / med->intervalDays) * med->intervalDays;
+        start.tm_isdst = -1;
+        time_t next = mktime(&start);
+        if (next <= after) { start.tm_mday += med->intervalDays; start.tm_isdst = -1; next = mktime(&start); }
+        return next;
     } else {
         // Weekly: find the earliest active day of week within the next 7 days.
         // times[0] is the time-of-day; weekMask bit N is day N (0=Sunday…6=Saturday).
@@ -174,8 +206,9 @@ time_t med_list_next_dose_time(const MedEntry *med, time_t after) {
         t.tm_hour = med->times[0].h;
         t.tm_min  = med->times[0].m;
         t.tm_sec  = 0;
+        t.tm_isdst = -1;
         time_t occ = mktime(&t);
-        if (occ <= after) occ += 86400;
+        if (occ <= after) { t.tm_mday++; t.tm_isdst = -1; occ = mktime(&t); }
         struct tm check = *localtime(&occ);
         for (int steps = 0; steps < 7; steps++) {
             int dow = check.tm_wday;
@@ -187,6 +220,7 @@ time_t med_list_next_dose_time(const MedEntry *med, time_t after) {
             check.tm_hour  = med->times[0].h;
             check.tm_min   = med->times[0].m;
             check.tm_sec   = 0;
+            check.tm_isdst = -1;
             mktime(&check);
         }
         return 0;

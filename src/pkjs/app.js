@@ -65,20 +65,25 @@ function loadConfig() {
   return null;
 }
 
-function logDoseAction(action, medIndex, ts) {
+function logDoseAction(action, medIndex, ts, medId) {
   var key = 'pebble_meds_log';
   var log = [];
   try {
     if (typeof localStorage !== 'undefined') {
       var raw = localStorage.getItem(key);
       if (raw) { try { log = JSON.parse(raw); } catch (e) {} }
-      log.push({ medIndex: medIndex, ts: ts, status: action });
+      if (action === 'taken' && log.some(function (entry) {
+        return entry.ts === ts && entry.status === 'taken' &&
+          (medId ? entry.medId === medId : entry.medIndex === medIndex);
+      })) return false;
+      log.push({ medIndex: medIndex, medId: medId, ts: ts, status: action });
       if (log.length > 500) log = log.slice(log.length - 500);
       localStorage.setItem(key, JSON.stringify(log));
     }
   } catch (e) {
     console.log('localStorage: logDoseAction failed: ' + e.message);
   }
+  return true;
 }
 
 function getConfigUrl() {
@@ -95,24 +100,44 @@ function getConfigUrl() {
 
 function sendConfigToWatch(cfg) {
   try {
-    var json = JSON.stringify(cfg);
+    var fields = { taker: 'a', name: 'n', dose: 'd', scheduleType: 's', times: 't',
+      intervalHours: 'H', startHour: 'h', startMinute: 'm', lastTakenTs: 'L',
+      weekMask: 'w', shape: 'p', color: 'c', vibePattern: 'v',
+      intervalDays: 'I', startDate: 'D', inventory: 'i', lowThreshold: 'l' };
+    var watchMeds = (cfg.meds || []).slice(0, 16).map(function (med) {
+      var copy = {};
+      Object.keys(fields).forEach(function (key) {
+        if (med[key] !== undefined) copy[fields[key]] = key === 'times'
+          ? med.times.map(function (time) { return time.h * 60 + time.m; }) : med[key];
+      });
+      return copy;
+    });
+    var settings = cfg.settings || {};
+    var finalMessage = { count: watchMeds.length, settings: {
+      snoozeMins: settings.snoozeMins, privacyMode: settings.privacyMode,
+      quietDuringSleep: settings.quietDuringSleep
+    } };
+    var messages = watchMeds.map(function (med, index) { return { index: index, med: med }; });
+    messages.push(finalMessage);
     var chunks = [];
-    for (var i = 0; i < json.length; i += CHUNK_SIZE) {
-      chunks.push(json.slice(i, i + CHUNK_SIZE));
-    }
-
-    var total = chunks.length;
-    console.log('Sending config in ' + total + ' chunk(s), total ' + json.length + ' bytes');
+    messages.forEach(function (message) {
+      var json = JSON.stringify(message);
+      var total = Math.ceil(json.length / CHUNK_SIZE);
+      for (var i = 0; i < json.length; i += CHUNK_SIZE) {
+        chunks.push({ text: json.slice(i, i + CHUNK_SIZE), index: i / CHUNK_SIZE, total: total });
+      }
+    });
+    console.log('Sending config in ' + chunks.length + ' chunk(s)');
 
     var sendChunk = function(idx) {
-      if (idx >= total) {
+      if (idx >= chunks.length) {
         console.log('Config send complete');
         return;
       }
       var msg = {};
-      msg[KEY_CONFIG_JSON] = chunks[idx];
-      msg[KEY_CHUNK_INDEX] = idx;
-      msg[KEY_CHUNK_TOTAL] = total;
+      msg[KEY_CONFIG_JSON] = chunks[idx].text;
+      msg[KEY_CHUNK_INDEX] = chunks[idx].index;
+      msg[KEY_CHUNK_TOTAL] = chunks[idx].total;
       Pebble.sendAppMessage(
         msg,
         function () { sendChunk(idx + 1); },
@@ -201,12 +226,14 @@ Pebble.addEventListener('appmessage', function (e) {
       var medIndex = msg[KEY_MED_INDEX];
       var doseTs   = msg[KEY_DOSE_TS] || Math.floor(Date.now() / 1000);
 
-      logDoseAction(action, medIndex, doseTs);
+      var cfg = loadConfig();
+      var med = cfg && cfg.meds && cfg.meds[medIndex];
+      var firstAction = logDoseAction(action, medIndex, doseTs, med && med.medId);
 
-      if (action === 'taken') {
-        var cfg = loadConfig();
-        if (cfg && cfg.meds[medIndex] && cfg.meds[medIndex].scheduleType === 'interval') {
-          cfg.meds[medIndex].lastTakenTs = doseTs;
+      if (action === 'taken' && firstAction) {
+        if (med) {
+          if (med.scheduleType === 'interval') med.lastTakenTs = Math.floor(Date.now() / 1000);
+          if (med.inventory > 0) med.inventory--;
           saveConfig(cfg);
           sendConfigToWatch(cfg);
           try {

@@ -121,6 +121,8 @@ static void update_text(void) {
         } else {
             s_dose_buf[0] = '\0';
         }
+        if (s_mode == DETAIL_MODE_ALERT && med->inventory >= 0 && med->inventory <= med->lowThreshold)
+            snprintf(s_dose_buf, sizeof(s_dose_buf), "Low supply: %d left", med->inventory);
     }
 
     // "Due: HH:MM" / "Due: H:MM AM"
@@ -304,9 +306,9 @@ static void select_click(ClickRecognizerRef rec, void *ctx) {
         return;
     }
 
+    if (s_action_taken || dose_log_was_taken(s_med_index, (uint32_t)s_dose_time)) return;
     s_action_taken = true;
     dose_log_record(s_med_index, DOSE_TAKEN, (uint32_t)s_dose_time);
-    appmessage_send_action(s_med_index, "taken", (uint32_t)s_dose_time);
 
     // Update lastTakenTs on the watch immediately so interval scheduling uses
     // the actual taken time rather than waiting for the phone to sync it back.
@@ -314,6 +316,9 @@ static void select_click(ClickRecognizerRef rec, void *ctx) {
     if (med && med->scheduleType == SCHEDULE_INTERVAL) {
         med->lastTakenTs = (uint32_t)time(NULL);
     }
+    if (med && med->inventory > 0) med->inventory--;
+    med_list_save(s_med_index);
+    appmessage_send_action(s_med_index, "taken", (uint32_t)s_dose_time);
 
     vibes_short_pulse();
 

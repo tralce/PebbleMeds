@@ -14,6 +14,8 @@ function getNextDoseTimes(med, fromTs, toTs) {
     return getFixedTimes(med, fromTs, toTs);
   } else if (med.scheduleType === 'weekly') {
     return getWeeklyTimes(med, fromTs, toTs);
+  } else if (med.scheduleType === 'calendar') {
+    return getCalendarTimes(med, fromTs, toTs);
   } else {
     return getIntervalTimes(med, fromTs, toTs);
   }
@@ -93,9 +95,26 @@ function getWeeklyTimes(med, fromTs, toTs) {
   return results;
 }
 
+function getCalendarTimes(med, fromTs, toTs) {
+  if (!med.intervalDays || !/^\d{4}-\d{2}-\d{2}$/.test(med.startDate || '')) return [];
+  var parts = med.startDate.split('-').map(Number);
+  var start = new Date(parts[0], parts[1] - 1, parts[2], med.startHour, med.startMinute);
+  if (start.getFullYear() !== parts[0] || start.getMonth() !== parts[1] - 1 || start.getDate() !== parts[2]) return [];
+  var dates = [];
+  var day = new Date(start);
+  // Calendar increments preserve the clock time across DST changes.
+  while (day.getTime() / 1000 <= toTs) {
+    var ts = Math.floor(day.getTime() / 1000);
+    if (ts >= fromTs) dates.push(ts);
+    day.setDate(day.getDate() + med.intervalDays);
+  }
+  return dates;
+}
+
 module.exports = {
   getNextDoseTimes: getNextDoseTimes,
   getFixedTimes:    getFixedTimes,
   getIntervalTimes: getIntervalTimes,
   getWeeklyTimes:   getWeeklyTimes,
+  getCalendarTimes: getCalendarTimes,
 };

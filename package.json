@@ -1,6 +1,6 @@
 {
   "name": "pebble-meds",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "author": "Britt Piehler",
   "keywords": [
     "pebble-app"
@@ -22,7 +22,7 @@
     "uuid": "d4e8a2f0-1b3c-4d5e-8f9a-0b1c2d3e4f5a",
     "displayName": "Pebble Meds",
     "companyName": "Britt Piehler",
-    "versionLabel": "1.0.5",
+    "versionLabel": "1.0.6",
     "sdkVersion": "3",
     "enableMultiJS": true,
     "targetPlatforms": [
@@ -73,7 +73,8 @@
     },
     "capabilities": [
       "configurable",
-      "timeline_enabled"
+      "timeline_enabled",
+      "health"
     ]
   }
 }

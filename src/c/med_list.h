@@ -8,6 +8,7 @@ typedef enum {
     SCHEDULE_FIXED    = 0,
     SCHEDULE_INTERVAL = 1,
     SCHEDULE_WEEKLY   = 2,
+    SCHEDULE_CALENDAR = 3,
 } ScheduleType;
 
 typedef struct {
@@ -49,11 +50,18 @@ typedef struct {
     GColor       color;
     // Alert
     uint8_t      vibePattern;  // MedVibePattern; 0 = short (default)
+    uint16_t     intervalDays;
+    uint16_t     startYear;
+    uint8_t      startMonth;
+    uint8_t      startDay;
+    int16_t      inventory; // -1 means untracked
+    uint16_t     lowThreshold;
 } MedEntry;
 
 typedef struct {
     uint16_t snoozeMins;
     bool     privacyMode;
+    uint32_t quietDuringSleep; // kept beyond the old struct's padding for migration
 } AppSettings;
 
 void         med_list_init(void);
@@ -64,4 +72,5 @@ void         med_list_set_count(uint8_t count);
 void         med_list_set(uint8_t index, const MedEntry *entry);
 AppSettings *med_list_get_settings(void);
 void         med_list_save_settings(void);
+void         med_list_save(uint8_t index);
 time_t       med_list_next_dose_time(const MedEntry *med, time_t after);

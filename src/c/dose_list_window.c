@@ -62,22 +62,25 @@ static void format_dose_time(time_t ts, char *buf, size_t buflen) {
     struct tm t     = *localtime(&ts);
 
     bool is_today = (t.tm_yday == t_now.tm_yday && t.tm_year == t_now.tm_year);
+    struct tm tomorrow = t_now;
+    tomorrow.tm_mday++;
+    mktime(&tomorrow);
+    bool is_tomorrow = (t.tm_yday == tomorrow.tm_yday && t.tm_year == tomorrow.tm_year);
+    const char *prefix = is_today ? "" : is_tomorrow ? "Tmrw " : "";
+    const char *weekday = "";
+    if (!is_today && !is_tomorrow) {
+        static const char *names[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+        weekday = names[t.tm_wday];
+        prefix = weekday;
+    }
 
     if (clock_is_24h_style()) {
-        if (is_today) {
-            snprintf(buf, buflen, "%02d:%02d", t.tm_hour, t.tm_min);
-        } else {
-            snprintf(buf, buflen, "Tmrw %02d:%02d", t.tm_hour, t.tm_min);
-        }
+        snprintf(buf, buflen, "%s%s%02d:%02d", prefix, *weekday ? " " : "", t.tm_hour, t.tm_min);
     } else {
         int h = t.tm_hour % 12;
         if (h == 0) h = 12;
         const char *ampm = (t.tm_hour >= 12) ? "p" : "a";
-        if (is_today) {
-            snprintf(buf, buflen, "%d:%02d%s", h, t.tm_min, ampm);
-        } else {
-            snprintf(buf, buflen, "Tmrw %d:%02d%s", h, t.tm_min, ampm);
-        }
+        snprintf(buf, buflen, "%s%s%d:%02d%s", prefix, *weekday ? " " : "", h, t.tm_min, ampm);
     }
 }
 

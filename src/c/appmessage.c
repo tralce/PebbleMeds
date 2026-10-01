@@ -19,10 +19,10 @@
 #define KEY_DOSE_TS      MESSAGE_KEY_DoseTs
 #define KEY_REQUEST_SYNC MESSAGE_KEY_RequestSync
 
-// Chunked JSON reassembly. 16 meds * ~200 bytes each + overhead.
-#define JSON_BUF_SIZE    3300
-// jsmn token budget for a single med object (worst case ~35 tokens; 64 is ample).
-#define MED_TOKEN_COUNT  64
+// One medication is sent per JSON message, including maximum-length UTF-8 names.
+#define JSON_BUF_SIZE    1024
+// jsmn token budget for a single med object.
+#define MED_TOKEN_COUNT  96
 
 static char    s_json_buf[JSON_BUF_SIZE];
 static uint8_t s_expected_chunks = 0;
@@ -146,51 +146,79 @@ static void parse_med_object(const char *js, size_t len, MedEntry *med) {
         jsmntok_t *key = &tokens[j];
         jsmntok_t *val = &tokens[j + 1];
 
-        if (jsmn_eq(js, key, "taker")) {
+        if (jsmn_eq(js, key, "taker") || jsmn_eq(js, key, "a")) {
             jsmn_str(js, val, med->taker, sizeof(med->taker));
 
-        } else if (jsmn_eq(js, key, "name")) {
+        } else if (jsmn_eq(js, key, "name") || jsmn_eq(js, key, "n")) {
             jsmn_str(js, val, med->name, sizeof(med->name));
 
-        } else if (jsmn_eq(js, key, "dose")) {
+        } else if (jsmn_eq(js, key, "dose") || jsmn_eq(js, key, "d")) {
             jsmn_str(js, val, med->dose, sizeof(med->dose));
 
-        } else if (jsmn_eq(js, key, "scheduleType")) {
+        } else if (jsmn_eq(js, key, "scheduleType") || jsmn_eq(js, key, "s")) {
             char buf[16];
             jsmn_str(js, val, buf, sizeof(buf));
             if (strcmp(buf, "interval") == 0)
                 med->scheduleType = SCHEDULE_INTERVAL;
             else if (strcmp(buf, "weekly") == 0)
                 med->scheduleType = SCHEDULE_WEEKLY;
+            else if (strcmp(buf, "calendar") == 0)
+                med->scheduleType = SCHEDULE_CALENDAR;
             else
                 med->scheduleType = SCHEDULE_FIXED;
 
-        } else if (jsmn_eq(js, key, "weekMask")) {
+        } else if (jsmn_eq(js, key, "weekMask") || jsmn_eq(js, key, "w")) {
             med->weekMask = (uint8_t)jsmn_toi(js, val);
 
-        } else if (jsmn_eq(js, key, "intervalHours")) {
+        } else if (jsmn_eq(js, key, "intervalHours") || jsmn_eq(js, key, "H")) {
             med->intervalHours = (uint8_t)jsmn_toi(js, val);
 
-        } else if (jsmn_eq(js, key, "startHour")) {
+        } else if (jsmn_eq(js, key, "intervalDays") || jsmn_eq(js, key, "I")) {
+            int days = jsmn_toi(js, val);
+            if (days >= 1 && days <= 365) med->intervalDays = days;
+
+        } else if (jsmn_eq(js, key, "startDate") || jsmn_eq(js, key, "D")) {
+            char date[16];
+            jsmn_str(js, val, date, sizeof(date));
+            bool valid = strlen(date) == 10 && date[4] == '-' && date[7] == '-';
+            for (int n = 0; n < 10 && valid; n++) {
+                if (n != 4 && n != 7 && (date[n] < '0' || date[n] > '9')) valid = false;
+            }
+            int y = valid ? (date[0]-'0')*1000 + (date[1]-'0')*100 + (date[2]-'0')*10 + date[3]-'0' : 0;
+            int m = valid ? (date[5]-'0')*10 + date[6]-'0' : 0;
+            int d = valid ? (date[8]-'0')*10 + date[9]-'0' : 0;
+            if (y >= 1970 && y <= 2099 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+                med->startYear = y; med->startMonth = m; med->startDay = d;
+            }
+
+        } else if (jsmn_eq(js, key, "inventory") || jsmn_eq(js, key, "i")) {
+            int count = jsmn_toi(js, val);
+            if (count >= 0 && count <= 32767) med->inventory = count;
+
+        } else if (jsmn_eq(js, key, "lowThreshold") || jsmn_eq(js, key, "l")) {
+            int threshold = jsmn_toi(js, val);
+            if (threshold >= 0 && threshold <= 32767) med->lowThreshold = threshold;
+
+        } else if (jsmn_eq(js, key, "startHour") || jsmn_eq(js, key, "h")) {
             med->startHour = (uint8_t)jsmn_toi(js, val);
 
-        } else if (jsmn_eq(js, key, "startMinute")) {
+        } else if (jsmn_eq(js, key, "startMinute") || jsmn_eq(js, key, "m")) {
             med->startMinute = (uint8_t)jsmn_toi(js, val);
 
-        } else if (jsmn_eq(js, key, "lastTakenTs")) {
+        } else if (jsmn_eq(js, key, "lastTakenTs") || jsmn_eq(js, key, "L")) {
             med->lastTakenTs = (uint32_t)jsmn_toi(js, val);
 
-        } else if (jsmn_eq(js, key, "shape")) {
+        } else if (jsmn_eq(js, key, "shape") || jsmn_eq(js, key, "p")) {
             char buf[16];
             jsmn_str(js, val, buf, sizeof(buf));
             med->shape = shape_from_name(buf);
 
-        } else if (jsmn_eq(js, key, "color")) {
+        } else if (jsmn_eq(js, key, "color") || jsmn_eq(js, key, "c")) {
             char buf[48];
             jsmn_str(js, val, buf, sizeof(buf));
             med->color = gcolor_from_name(buf);
 
-        } else if (jsmn_eq(js, key, "vibePattern")) {
+        } else if (jsmn_eq(js, key, "vibePattern") || jsmn_eq(js, key, "v")) {
             char buf[8];
             jsmn_str(js, val, buf, sizeof(buf));
             if (strcmp(buf, "long") == 0)
@@ -200,11 +228,20 @@ static void parse_med_object(const char *js, size_t len, MedEntry *med) {
             else
                 med->vibePattern = MED_VIBE_SHORT;
 
-        } else if (jsmn_eq(js, key, "times") && val->type == JSMN_ARRAY) {
+        } else if ((jsmn_eq(js, key, "times") || jsmn_eq(js, key, "t")) && val->type == JSMN_ARRAY) {
             uint8_t count = (uint8_t)(val->size > 4 ? 4 : val->size);
             med->timeCount = count;
             int ti = j + 2; // past "times" key + array token
             for (uint8_t t = 0; t < count; t++) {
+                if (tokens[ti].type == JSMN_PRIMITIVE) {
+                    int minutes = jsmn_toi(js, &tokens[ti]);
+                    if (minutes >= 0 && minutes < 1440) {
+                        med->times[t].h = minutes / 60;
+                        med->times[t].m = minutes % 60;
+                    }
+                    ti++;
+                    continue;
+                }
                 int tpairs = tokens[ti].size;
                 int tij = ti + 1;
                 for (int tp = 0; tp < tpairs; tp++) {
@@ -246,6 +283,10 @@ static void parse_settings_object(const char *js, size_t len) {
             char buf[8];
             jsmn_str(js, val, buf, sizeof(buf));
             s->privacyMode = (strcmp(buf, "true") == 0);
+        } else if (jsmn_eq(js, key, "quietDuringSleep")) {
+            char buf[8];
+            jsmn_str(js, val, buf, sizeof(buf));
+            s->quietDuringSleep = (strcmp(buf, "true") == 0);
         }
         j += jsmn_subtree_size(tokens, j);
     }
@@ -275,6 +316,39 @@ static const char *find_root_value(const char *json, const char *key) {
 // ---------------------------------------------------------------------------
 
 static void process_config_json(const char *json) {
+    const char *index_val = find_root_value(json, "index");
+    const char *med_val = find_root_value(json, "med");
+    if (index_val && med_val) {
+        int index = atoi(index_val);
+        while (*med_val == ' ' || *med_val == '\t') med_val++;
+        const char *end = *med_val == '{' ? find_matching_brace(med_val) : NULL;
+        if (index >= 0 && index < MED_MAX && end) {
+            MedEntry entry;
+            memset(&entry, 0, sizeof(entry));
+            entry.color = GColorWhite;
+            entry.inventory = -1;
+            parse_med_object(med_val, (size_t)(end - med_val + 1), &entry);
+            med_list_set(index, &entry);
+        }
+        return;
+    }
+
+    const char *count_val = find_root_value(json, "count");
+    if (count_val) {
+        int count = atoi(count_val);
+        if (count < 0) count = 0;
+        med_list_set_count((uint8_t)(count > MED_MAX ? MED_MAX : count));
+        const char *settings_val = find_root_value(json, "settings");
+        if (settings_val) {
+            while (*settings_val == ' ' || *settings_val == '\t') settings_val++;
+            const char *end = *settings_val == '{' ? find_matching_brace(settings_val) : NULL;
+            if (end) parse_settings_object(settings_val, (size_t)(end - settings_val + 1));
+        }
+        dose_list_window_refresh();
+        notifications_schedule_wakeups();
+        return;
+    }
+
     uint8_t new_count = 0;
 
     // ---- Parse meds array ----
@@ -293,6 +367,7 @@ static void process_config_json(const char *json) {
                 MedEntry entry;
                 memset(&entry, 0, sizeof(entry));
                 entry.color = GColorWhite;
+                entry.inventory = -1;
                 parse_med_object(p, (size_t)(obj_end - p + 1), &entry);
                 med_list_set(new_count, &entry);
                 new_count++;

@@ -10,12 +10,13 @@ typedef enum {
 typedef struct {
     uint32_t   ts;
     uint8_t    med_index;
-    DoseAction action;
-    uint8_t    _pad;  // keep struct size even
+    uint8_t    action;
+    uint16_t   med_sig;
 } DoseLogEntry;
 
 void         dose_log_init(void);
 void         dose_log_deinit(void);
 void         dose_log_record(uint8_t med_index, DoseAction action, uint32_t ts);
+bool         dose_log_was_taken(uint8_t med_index, uint32_t ts);
 uint8_t      dose_log_count(void);
 DoseLogEntry dose_log_get(uint8_t index);  // 0 = oldest, count-1 = newest
