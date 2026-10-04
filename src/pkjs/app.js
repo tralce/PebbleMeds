@@ -14,7 +14,7 @@ console.log('PebbleMeds JS starting');
 // ---------------------------------------------------------------------------
 // Constants and Globals
 // ---------------------------------------------------------------------------
-var CONFIG_URL = 'https://bpiehler.github.io/PebbleMeds/src/pkjs/config.html';
+var CONFIG_URL = 'http://172.21.2.3:8000/src/pkjs/config.html';
 var CHUNK_SIZE = 200;
 
 var KEY_CONFIG_JSON  = 10000;
